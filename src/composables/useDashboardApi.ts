@@ -15,6 +15,7 @@ import type {
   BasicDataOverviewVO,
   DataFillRateVO,
   DeptUserEntity,
+  FillCountVO,
   NationalReportVO,
   PageResult,
   RegionNode,
@@ -53,6 +54,9 @@ const accessList = computed<AccessListVO | null>(() => {
 const accessLoginNum = ref<AccessLoginNumVO | null>(null)
 const basicData = ref<BasicDataOverviewVO | null>(null)
 const deptTopPage = ref<PageResult<DeptUserEntity> | null>(null)
+/** 自治区报表（getFillCount isExtended=false）与基层精简保留清单（isExtended=true） */
+const autonomousFillCount = ref<FillCountVO | null>(null)
+const simplifyFillCount = ref<FillCountVO | null>(null)
 const regionDataLoading = ref(false)
 const globalDataLoading = ref(false)
 const accessTimeLoading = ref(false)
@@ -189,12 +193,17 @@ export async function loadGlobalData(): Promise<void> {
     const results = await Promise.allSettled([
       dashboardApi.getReportStats('country', code),
       dashboardApi.getAccessTrend(code),
-      dashboardApi.getAccessLoginNum(code)
+      dashboardApi.getAccessLoginNum(code),
+      // 自治区报表 / 基层精简保留清单：同一接口按 isExtended 取两份
+      dashboardApi.getFillCount(code, false),
+      dashboardApi.getFillCount(code, true)
     ])
 
     reportStats.value = settledValue(results[0] as PromiseSettledResult<ReportStatsVO>)
     accessTrend.value = settledValue(results[1] as PromiseSettledResult<AccessTrendVO>)
     accessLoginNum.value = settledValue(results[2] as PromiseSettledResult<AccessLoginNumVO>)
+    autonomousFillCount.value = settledValue(results[3] as PromiseSettledResult<FillCountVO>)
+    simplifyFillCount.value = settledValue(results[4] as PromiseSettledResult<FillCountVO>)
   } finally {
     globalDataLoading.value = false
   }
@@ -304,6 +313,8 @@ export function useDashboardApi() {
     accessLoginNum,
     basicData,
     deptTopPage,
+    autonomousFillCount,
+    simplifyFillCount,
     accessTimeType,
     regionDataLoading,
     globalDataLoading,

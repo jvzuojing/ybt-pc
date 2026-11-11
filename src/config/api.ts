@@ -49,13 +49,22 @@ export const API_PATHS = {
   /** 区划树 */
   regionTree: `${OPEN_PREFIX}/dataDashboard/getRegionTree`,
   /** 基础数据 - 人房企场所概览（台账 api_url：/open/v1/dataDashboard/getDaPingBasicDataOverview） */
-  basicDataOverview: `${OPEN_PREFIX}/dataDashboard/getDaPingBasicDataOverview`
+  basicDataOverview: `${OPEN_PREFIX}/dataDashboard/getDaPingBasicDataOverview`,
+  /**
+   * 自治区报表 / 基层精简保留清单（新增接口）
+   * 文档只提供 /open/v1 这一个地址且固定要求 appKey/appSecret，故不随构建模式切换前缀；
+   * 若后端另提供非 open 版本，可运行时覆盖：setApiConfig({ paths: { fillCount: '/dataDashboard/getFillCount' } })
+   */
+  fillCount: '/open/v1/dataDashboard/getFillCount'
 }
 
 export type ApiPathKey = keyof typeof API_PATHS
 
 /** 所有接口共用的 apiKey（接口台账 app_key 列，可用 VITE_API_KEY 覆盖） */
 const DEFAULT_API_KEY = import.meta.env.VITE_API_KEY || 'daping-share'
+
+/** 新增 getFillCount 接口的独立 appSecret（来自《自治区报表，基层精简保留新增接口》文档） */
+export const FILL_COUNT_SECRET = '87825d6b554e44b2bad3d16903e3670b'
 
 /** 各接口独立的 apiSecret（来自《gdp_odr_nm_share_api》接口台账 app_secret 列，按接口一一对应） */
 export const API_SECRETS: Record<ApiPathKey, string> = {
@@ -69,7 +78,8 @@ export const API_SECRETS: Record<ApiPathKey, string> = {
   accessTrend: 'd0ad841163624cb8904393fa375073e1',
   accessList: '7bdf30bc8428486d88f2de598b5bd786',
   accessLoginNum: '7d75c5291b654a92b9319c991cc311dc',
-  regionTree: '8e861cb48dae4616b6ed9a3bda2d578a'
+  regionTree: '8e861cb48dae4616b6ed9a3bda2d578a',
+  fillCount: FILL_COUNT_SECRET
 }
 
 /**

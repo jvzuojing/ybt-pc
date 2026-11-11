@@ -9,11 +9,18 @@
       <div class="panel-title">
         <span class="panel-title-text">报表概览</span>
         <div class="dashboard-tabs">
-          <span class="dashboard-tab active">国家报表</span>
+          <span
+            v-for="tab in reportTabs"
+            :key="tab.key"
+            class="dashboard-tab"
+            :class="{ active: reportTab === tab.key }"
+            @click="reportTab = tab.key"
+          >{{ tab.label }}</span>
         </div>
       </div>
 
-      <div class="report-content">
+      <!-- 国家报表：原有内容保持不变 -->
+      <div v-if="reportTab === 'national'" class="report-content">
         <div class="report-card-list">
           <div
             v-for="card in reportSummaryCards"
@@ -45,6 +52,46 @@
         <!-- 分布情况 -->
         <div class="report-distribution">
           <div ref="distributionRef" class="chart-distribution"></div>
+        </div>
+      </div>
+
+      <!-- 自治区报表：数据来自 getFillCount（isExtended false/true），明细走弹窗 -->
+      <div v-else class="report-content auto-report">
+        <div class="auto-sub-tabs">
+          <span
+            v-for="tab in autoTabs"
+            :key="tab.key"
+            class="auto-sub-tab"
+            :class="{ active: autoTab === tab.key }"
+            @click="autoTab = tab.key"
+          >{{ tab.label }}</span>
+        </div>
+        <div class="auto-body" :class="{ 'auto-body--simplify': autoTab === 'simplify' }">
+          <div class="auto-cards">
+            <div
+              v-for="card in autoCards"
+              :key="card.key"
+              class="auto-card"
+              :class="{ clickable: autoHasData }"
+              @click="autoHasData && openAutoDetail()"
+            >
+              <div class="ac-label">{{ card.label }}</div>
+              <div class="ac-value">
+                {{ card.value }}<span v-if="card.unit" class="ac-unit">{{ card.unit }}</span>
+                <span v-if="autoHasData" class="ac-doc">📋</span>
+              </div>
+            </div>
+          </div>
+          <div v-if="autoTab === 'data'" class="auto-chart-col auto-chart-col--wide">
+            <div class="auto-sec-title">分布情况</div>
+            <div v-if="autoHasData" ref="autoBarRef" class="auto-chart"></div>
+            <div v-else class="auto-chart auto-chart--empty">暂无数据</div>
+          </div>
+          <div class="auto-chart-col">
+            <div class="auto-sec-title">按周期统计</div>
+            <div v-if="autoHasData" ref="autoDonutRef" class="auto-chart"></div>
+            <div v-else class="auto-chart auto-chart--empty">暂无数据</div>
+          </div>
         </div>
       </div>
     </div>
@@ -123,6 +170,40 @@
           v-model:page-size="pageSize"
           :page-sizes="[10, 20, 50]"
           :total="pageTotal"
+          layout="sizes, prev, pager, next"
+          small
+          background
+        />
+      </div>
+    </el-dialog>
+
+    <!-- 自治区数据表 / 基层精简保留清单 明细弹窗 -->
+    <el-dialog
+      v-model="showAutoDialog"
+      :title="autoDialogTitle"
+      width="1000px"
+      :close-on-click-modal="false"
+      class="dark_dialog"
+    >
+      <el-table :data="autoPageList" size="small" height="420" class="report-dialog-table">
+        <el-table-column type="index" :index="autoIndexOffset" label="序号" width="60" align="center" />
+        <el-table-column prop="name" label="数据表名称" min-width="240" show-overflow-tooltip />
+        <el-table-column prop="dept" label="发布部门名称" width="210" show-overflow-tooltip />
+        <el-table-column prop="cycle" label="填报周期" width="90" align="center" />
+        <el-table-column prop="dataTotal" :label="autoDataLabel" width="100" align="center">
+          <template #default="{ row }">
+            <span class="cell-cyan">{{ row.dataTotal }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="time" :label="autoTimeLabel" width="110" align="center" />
+      </el-table>
+      <div class="dialog-pagination">
+        <span class="page-total">共 {{ autoList.length }} 条记录</span>
+        <el-pagination
+          v-model:current-page="autoPage"
+          v-model:page-size="autoPageSize"
+          :page-sizes="[10, 20, 50]"
+          :total="autoList.length"
           layout="sizes, prev, pager, next"
           small
           background
@@ -214,7 +295,7 @@ import { useDashboardApi } from '../composables/useDashboardApi'
 
 const { reportData, fillRateData, entityData, fetchDetailList } = useScaledData()
 const { selectedRegion, scaleVersion } = useRegionData()
-const { regionDataLoading, globalDataLoading } = useDashboardApi()
+const { regionDataLoading, globalDataLoading, autonomousFillCount, simplifyFillCount } = useDashboardApi()
 
 const dpr = window.devicePixelRatio || 1
 
@@ -280,6 +361,221 @@ const statusClass = (status: string) => {
   if (status === '待填报') return 'status-blue'
   if (status === '已签收') return 'status-teal'
   return 'status-blue'
+}
+
+/* ---------------- 自治区报表（getFillCount：isExtended=false 数据表 / true 精简保留清单） ---------------- */
+const reportTabs = [
+  { key: 'national', label: '国家报表' },
+  { key: 'autonomous', label: '自治区报表' }
+] as const
+const reportTab = ref<'national' | 'autonomous'>('national')
+
+const autoTabs = [
+  { key: 'data', label: '自治区数据表' },
+  { key: 'simplify', label: '基层精简保留清单' }
+] as const
+const autoTab = ref<'data' | 'simplify'>('data')
+
+const autoRaw = computed(() =>
+  autoTab.value === 'data' ? autonomousFillCount.value : simplifyFillCount.value
+)
+const autoHasData = computed(() => !!autoRaw.value)
+
+/** 累计数据量：万级换算成「万」，与 dapin 端口径一致 */
+const formatVolumeText = (value: number) => {
+  const num = Number(value) || 0
+  if (num >= 10000) {
+    const wan = num / 10000
+    return `${Number.isInteger(wan) ? wan : wan.toFixed(1)}万`
+  }
+  return String(num)
+}
+
+const autoCards = computed(() => {
+  const raw = autoRaw.value
+  const isData = autoTab.value === 'data'
+  const countLabel = isData ? '数据表总数' : '基层扩展表'
+  const volumeLabel = isData ? '累计数据总量' : '累计填报数据'
+  if (!raw) {
+    return [
+      { key: 'count', label: countLabel, value: '—', unit: '' },
+      { key: 'volume', label: volumeLabel, value: '—', unit: '' },
+      { key: 'issue', label: '涉及下发部门总数', value: '—', unit: '' }
+    ]
+  }
+  const volumeNum = Number(raw.ledgerDataCount ?? 0)
+  return [
+    { key: 'count', label: countLabel, value: String(raw.ledgerCount ?? 0), unit: '张' },
+    {
+      key: 'volume',
+      label: volumeLabel,
+      value: formatVolumeText(volumeNum),
+      unit: volumeNum >= 10000 ? '' : '条'
+    },
+    { key: 'issue', label: '涉及下发部门总数', value: String(raw.ledgerIssueCount ?? 0), unit: '' }
+  ]
+})
+
+/** { 名称: 数量 } → 图表数据（按数量降序） */
+const toDistList = (map: Record<string, number> | undefined) =>
+  Object.entries(map ?? {})
+    .map(([name, value]) => ({ name, value: Number(value) || 0 }))
+    .sort((a, b) => b.value - a.value)
+
+const autoDist = computed(() => toDistList(autoRaw.value?.deptLedgerCount))
+const autoCycle = computed(() => toDistList(autoRaw.value?.cycleLedgerCount))
+
+const autoBarRef = ref<HTMLElement | null>(null)
+const autoDonutRef = ref<HTMLElement | null>(null)
+let autoBarChart: echarts.ECharts | null = null
+let autoDonutChart: echarts.ECharts | null = null
+
+const AUTO_DONUT_COLORS = ['#40e0ff', '#5dd39e', '#f5a623', '#9b8cff', '#ff7a6b', '#4ea1ff']
+
+const renderAutoCharts = () => {
+  if (reportTab.value !== 'autonomous') return
+  if (autoBarRef.value) {
+    autoBarChart = autoBarChart || echarts.init(autoBarRef.value, undefined, { devicePixelRatio: dpr })
+    autoBarChart.setOption(
+      {
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: { type: 'shadow' },
+          formatter: (params: any) => {
+            const p = Array.isArray(params) ? params[0] : params
+            if (!p) return ''
+            return `${p.name}<br/>报表数：${p.value} 张`
+          }
+        },
+        grid: { top: 6, right: 30, bottom: 4, left: 10, containLabel: true },
+        dataZoom: [
+          {
+            type: 'inside',
+            yAxisIndex: 0,
+            startValue: 0,
+            endValue: Math.min(7, Math.max(2, autoDist.value.length - 1)),
+            zoomOnMouseWheel: false,
+            moveOnMouseWheel: true,
+            moveOnMouseMove: true,
+            filterMode: 'filter'
+          }
+        ],
+        xAxis: {
+          type: 'value',
+          axisLine: { lineStyle: { color: 'rgba(64,158,255,0.2)' } },
+          axisLabel: { color: '#7a93c4', fontSize: 12, formatter: '{value}张' },
+          minInterval: 1,
+          splitLine: { lineStyle: { color: 'rgba(64,158,255,0.08)' } }
+        },
+        yAxis: {
+          type: 'category',
+          inverse: true,
+          data: autoDist.value.map((d) => d.name),
+          axisLine: { lineStyle: { color: 'rgba(64,158,255,0.2)' } },
+          axisTick: { show: false },
+          axisLabel: {
+            color: '#a9c8f5',
+            fontSize: 12,
+            width: 130,
+            margin: 10,
+            overflow: 'truncate',
+            align: 'right',
+            verticalAlign: 'middle'
+          },
+          splitLine: { show: false }
+        },
+        series: [
+          {
+            type: 'bar',
+            data: autoDist.value.map((d) => d.value),
+            itemStyle: {
+              color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+                { offset: 0, color: '#1a6cff' },
+                { offset: 1, color: '#40e0ff' }
+              ]),
+              borderRadius: [0, 4, 4, 0]
+            },
+            barMaxWidth: 11,
+            label: {
+              show: true,
+              position: 'right',
+              color: '#40e0ff',
+              fontSize: 12,
+              formatter: '{c}张'
+            }
+          }
+        ]
+      },
+      true
+    )
+  }
+  if (autoDonutRef.value) {
+    autoDonutChart = autoDonutChart || echarts.init(autoDonutRef.value, undefined, { devicePixelRatio: dpr })
+    autoDonutChart.setOption(
+      {
+        tooltip: { trigger: 'item', formatter: '{b}: {c}' },
+        series: [
+          {
+            type: 'pie',
+            center: ['50%', '50%'],
+            radius: ['40%', '66%'],
+            label: { color: '#a9c8f5', fontSize: 12, formatter: '{b}\n{c}' },
+            labelLine: { length: 6, length2: 6, lineStyle: { color: 'rgba(64,158,255,0.3)' } },
+            itemStyle: { borderColor: 'rgba(8,16,38,0.95)', borderWidth: 2 },
+            data: autoCycle.value.map((d, i) => ({
+              ...d,
+              itemStyle: { color: AUTO_DONUT_COLORS[i % AUTO_DONUT_COLORS.length] }
+            }))
+          }
+        ]
+      },
+      true
+    )
+  }
+}
+
+/** 切页签时容器会随 v-if 销毁重建，旧实例必须先释放再重建 */
+watch([reportTab, autoTab], () => {
+  autoBarChart?.dispose()
+  autoBarChart = null
+  autoDonutChart?.dispose()
+  autoDonutChart = null
+  nextTick(() => renderAutoCharts())
+})
+
+watch([autonomousFillCount, simplifyFillCount], () => nextTick(() => renderAutoCharts()), { deep: true })
+
+/* 自治区明细弹窗（ledgerListInfo 全量前端分页） */
+const showAutoDialog = ref(false)
+const autoPage = ref(1)
+const autoPageSize = ref(10)
+const autoDialogTitle = computed(() =>
+  autoTab.value === 'data' ? '自治区数据表明细' : '基层精简保留清单明细'
+)
+const autoDataLabel = computed(() => (autoTab.value === 'data' ? '数据总量' : '数据量'))
+const autoTimeLabel = computed(() => (autoTab.value === 'data' ? '下发时间' : '发布时间'))
+
+const autoList = computed(() =>
+  (autoRaw.value?.ledgerListInfo ?? []).map((item) => ({
+    name: item.ledgerName ?? '',
+    dept: item.orgName ?? '',
+    cycle: item.reportCycleName ?? '--',
+    dataTotal: String(item.dataTotal ?? 0),
+    time: item.lastOnlieTime ?? item.lastOnlineTime ?? '--'
+  }))
+)
+
+const autoPageList = computed(() =>
+  autoList.value.slice((autoPage.value - 1) * autoPageSize.value, autoPage.value * autoPageSize.value)
+)
+
+/** 翻页后序号接着上一页排，而不是每页都从 1 开始 */
+const autoIndexOffset = computed(() => (autoPage.value - 1) * autoPageSize.value + 1)
+
+const openAutoDetail = () => {
+  if (!autoRaw.value) return
+  showAutoDialog.value = true
+  if (autoPage.value !== 1) autoPage.value = 1
 }
 
 // Entity Tab
@@ -918,6 +1214,8 @@ const resizeAll = () => {
   radarChart?.resize()
   entityTrendChart?.resize()
   wordCloudChart?.resize()
+  autoBarChart?.resize()
+  autoDonutChart?.resize()
 }
 
 // 接口数据回填后刷新图表
@@ -951,6 +1249,8 @@ onBeforeUnmount(() => {
   radarChart?.dispose()
   entityTrendChart?.dispose()
   wordCloudChart?.dispose()
+  autoBarChart?.dispose()
+  autoDonutChart?.dispose()
 })
 </script>
 
@@ -1325,5 +1625,136 @@ onBeforeUnmount(() => {
   color: #409eff;
   background: rgba(64, 158, 255, 0.15);
   border: 1px solid rgba(64, 158, 255, 0.4);
+}
+
+/* ===== 自治区报表（getFillCount） ===== */
+.auto-report {
+  flex-direction: column;
+  gap: 6px;
+}
+
+.auto-sub-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+}
+
+.auto-sub-tab {
+  padding: 4px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #dceaff;
+  background: rgba(18, 46, 90, 0.85);
+  border: 1px solid rgba(64, 158, 255, 0.35);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.auto-sub-tab.active {
+  color: #12244a;
+  background: #ffe94a;
+  border-color: #ffe94a;
+}
+
+.auto-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: var(--dashboard-gap, 10px);
+}
+
+.auto-cards {
+  flex: 0 0 190px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.auto-card {
+  flex: 1 1 0;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: rgba(30, 50, 100, 0.45);
+  border: 1px solid rgba(64, 158, 255, 0.35);
+  border-radius: 4px;
+}
+
+.auto-card.clickable {
+  cursor: pointer;
+}
+
+.auto-card.clickable:hover {
+  border-color: rgba(64, 200, 255, 0.65);
+  box-shadow: 0 0 10px rgba(64, 158, 255, 0.25);
+}
+
+.ac-label {
+  font-size: 13px;
+  color: #c8d6f5;
+}
+
+.ac-value {
+  font-size: 18px;
+  font-weight: bold;
+  color: #40e0ff;
+  font-family: 'DIN', 'Consolas', monospace;
+}
+
+.ac-unit {
+  margin-left: 2px;
+  font-size: 12px;
+}
+
+.ac-doc {
+  position: absolute;
+  right: 8px;
+  top: 6px;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.auto-chart-col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 精简保留清单没有分布情况图，环形图占满剩余宽度 */
+.auto-body--simplify .auto-chart-col {
+  flex: 1 1 auto;
+}
+
+.auto-chart-col--wide {
+  flex: 1.5 1 0;
+}
+
+.auto-sec-title {
+  flex: 0 0 auto;
+  text-align: center;
+  font-size: 14px;
+  color: #40e0ff;
+  letter-spacing: 2px;
+  margin-bottom: 2px;
+}
+
+.auto-chart {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.auto-chart--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #7a93c4;
+  font-size: 13px;
 }
 </style>
